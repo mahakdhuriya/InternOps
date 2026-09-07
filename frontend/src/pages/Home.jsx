@@ -16,6 +16,7 @@ import {
   User,
 } from 'lucide-react';
 
+import { useRouteInitialLoading } from '../components/loading/RouteInitialLoading';
 import { getTeamRoleBreakdown } from '../utils/teamRoleBreakdown';
 
 function attendancePct(m) {
