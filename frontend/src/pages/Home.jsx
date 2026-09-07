@@ -16,6 +16,7 @@ import {
   User,
 } from 'lucide-react';
 
+import { useRouteInitialLoading } from '../components/loading/RouteInitialLoading';
 import { getTeamRoleBreakdown } from '../utils/teamRoleBreakdown';
 
 function attendancePct(m) {
@@ -49,6 +50,9 @@ function QuickAction({ to, icon, label, tint, description }) {
 }
 
 function ManagerHome({ user }) {
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const hydrated = useAuthStore((s) => s.hydrated);
+
   const {
     data: team = [],
     isLoading,
@@ -58,13 +62,10 @@ function ManagerHome({ user }) {
   } = useQuery({
     queryKey: QUERY_KEYS.TEAM_MEMBERS,
     queryFn: () => api.get('/team/members').then((res) => res.data),
+    enabled: hydrated && !!accessToken,
   });
 
-  if (isLoading) {
-    return (
-      <p className="text-slate-600 dark:text-slate-300">Loading dashboard...</p>
-    );
-  }
+  useRouteInitialLoading(!hydrated || !accessToken || isLoading);
 
   if (isError) {
     return (
@@ -118,7 +119,7 @@ function ManagerHome({ user }) {
   });
 
   return (
-    <div className="animate-fade-in-up text-slate-900 dark:text-white">
+    <div className="text-slate-900 dark:text-white">
       {/* Welcome Header */}
       <div className="mb-7">
         <p className="text-xs md:text-sm uppercase tracking-[0.22em] text-indigo-600 dark:text-indigo-300 font-extrabold mb-2">
@@ -300,6 +301,8 @@ function ManagerHome({ user }) {
 
 function InternHome({ user }) {
   const now = new Date();
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const hydrated = useAuthStore((s) => s.hydrated);
 
   const {
     data: stats,
@@ -332,14 +335,10 @@ function InternHome({ user }) {
 
       return { att, attError, ratings, ratingsError };
     },
-    enabled: !!user,
+    enabled: hydrated && !!accessToken && !!user,
   });
 
-  if (isLoading) {
-    return (
-      <p className="text-slate-600 dark:text-slate-300">Loading dashboard...</p>
-    );
-  }
+  useRouteInitialLoading(!hydrated || !accessToken || isLoading);
 
   if (isError) {
     return (
@@ -369,7 +368,7 @@ function InternHome({ user }) {
     : '—';
 
   return (
-    <div className="animate-fade-in-up text-slate-900 dark:text-white">
+    <div className="text-slate-900 dark:text-white">
       {/* Welcome Header */}
       <div className="mb-7">
         <p className="text-xs md:text-sm uppercase tracking-[0.22em] text-indigo-600 dark:text-indigo-300 font-extrabold mb-2">
@@ -516,25 +515,21 @@ function InternHome({ user }) {
 
 export default function Home() {
   const user = useAuthStore((s) => s.user);
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const hydrated = useAuthStore((s) => s.hydrated);
 
   const {
     data: me,
-    isLoading,
     isError,
     error,
     refetch,
   } = useQuery({
     queryKey: QUERY_KEYS.USER_PROFILE,
     queryFn: () => api.get('/users/me').then((r) => r.data),
+    enabled: hydrated && !!accessToken,
   });
 
-  if (isLoading) {
-    return (
-      <p className="text-slate-600 dark:text-slate-300">Loading profile...</p>
-    );
-  }
-
-  if (isError) {
+  if (isError && !user) {
     return (
       <ApiErrorState
         error={error}
@@ -545,7 +540,11 @@ export default function Home() {
     );
   }
 
-  const u = { ...user, full_name: me?.full_name || user?.full_name };
+  const u = {
+    ...user,
+    ...me,
+    full_name: me?.full_name || user?.full_name || user?.fullName,
+  };
 
   const isManager = ['ADMIN', 'SENIOR_TL', 'TL', 'CAPTAIN'].includes(
     user?.role
