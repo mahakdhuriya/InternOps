@@ -245,30 +245,29 @@ async function startBulkGeneration(data, userId) {
     userId
   );
 
-const itemsToCreate = data.certificates.map((certData) => ({
-  bulk_job_id: job.id,
-  recipient_name: certData.recipient_name,
-  recipient_email: certData.recipient_email,
-  row_data: certData,
-  status: 'pending',
-}));
+  const itemsToCreate = data.certificates.map((certData) => ({
+    bulk_job_id: job.id,
+    recipient_name: certData.recipient_name,
+    recipient_email: certData.recipient_email,
+    row_data: certData,
+    status: 'pending',
+  }));
 
+  await repo.createBulkJobItemsBatch(itemsToCreate);
 
-await repo.createBulkJobItemsBatch(itemsToCreate);
+  const bulkJobQueue = require('../../services/bulkJobQueue');
+  bulkJobQueue.addJob(job.id, data, userId);
 
-const bulkJobQueue = require('../../services/bulkJobQueue');
-bulkJobQueue.addJob(job.id, data, userId);
-
-return {
-  success: true,
-  data: {
-    job_id: job.id,
-    total: data.certificates.length,
-    generated: 0,
-    failed: 0,
-    errors: [],
-  },
-};
+  return {
+    success: true,
+    data: {
+      job_id: job.id,
+      total: data.certificates.length,
+      generated: 0,
+      failed: 0,
+      errors: [],
+    },
+  };
 }
 
 async function processBulkGeneration(jobId, initialData, userId, pLimiter) {

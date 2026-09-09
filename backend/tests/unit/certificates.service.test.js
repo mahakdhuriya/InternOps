@@ -50,9 +50,6 @@ describe('certificate AI prompt sanitization', () => {
   });
 });
 
-
-
-
 describe('bulk certificate generation limit', () => {
   beforeEach(() => {
     jest.resetModules();

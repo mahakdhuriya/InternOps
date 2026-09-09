@@ -79,14 +79,14 @@ app.get(
     },
   },
   async (req, reply) => {
-  if (isShuttingDown) {
-    return reply.status(503).send({
-      status: 'shutting_down',
-    });
-  }
+    if (isShuttingDown) {
+      return reply.status(503).send({
+        status: 'shutting_down',
+      });
+    }
 
-  return reply.send({ status: 'ok' });
-}
+    return reply.send({ status: 'ok' });
+  }
 );
 
 app.get(
@@ -527,11 +527,7 @@ const gracefulShutdown = async (signal) => {
   shutdownStarted = true;
   isShuttingDown = true;
 
-
-  app.log.info(
-    { signal },
-    `Received ${signal}, shutting down gracefully...`
-  );
+  app.log.info({ signal }, `Received ${signal}, shutting down gracefully...`);
   const forceShutdown = setTimeout(() => {
     console.error('Shutdown timed out. Forcing exit.');
     process.exit(1);
@@ -539,7 +535,6 @@ const gracefulShutdown = async (signal) => {
 
   try {
     await app.close();
-
 
     app.log.info(
       { activeRequests: metrics.getActiveRequests() },
