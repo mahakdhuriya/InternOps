@@ -14,6 +14,8 @@ const activeRequests = new client.Gauge({
   help: 'Number of active HTTP requests',
 });
 
+let activeRequestCount = 0;
+
 // New AI Telemetry Metrics requested by your Team Leader
 const aiServiceDuration = new client.Histogram({
   name: 'ai_service_duration_ms',
@@ -35,20 +37,50 @@ const aiServiceErrors = new client.Counter({
 
 // Existing functions
 async function trackActiveRequests(request, reply) {
+  activeRequestCount++;
   activeRequests.inc();
 
-  reply.raw.on('finish', () => {
+  let finished = false;
+
+  const requestFinished = () => {
+    if (finished) return;
+
+    finished = true;
+    activeRequestCount--;
     activeRequests.dec();
-  });
+  };
+
+  reply.raw.once('finish', requestFinished);
+  reply.raw.once('close', requestFinished);
+}
+
+function getActiveRequests() {
+  return activeRequestCount;
 }
 
 function observeHttpRequest(req, res, startTime) {
-  const route = req.route ? req.route.path : req.url;
-  const duration = Date.now() - startTime;
-
+  const route = req.routeOptions?.url || req.routerPath || req.url;
+  const start = Number(startTime);
+  if (!Number.isFinite(start)) {
+    req.log?.warn(
+      { method: req.method, route },
+      'Skipping HTTP duration metric because request start time is missing'
+    );
+    return false;
+  }
+  const duration =
+    Number(process.hrtime.bigint() - BigInt(Math.trunc(start))) / 1e6;
+  if (!Number.isFinite(duration) || duration < 0) {
+    req.log?.warn(
+      { method: req.method, route, duration },
+      'Skipping invalid HTTP duration metric'
+    );
+    return false;
+  }
   httpRequestDurationMicroseconds
     .labels(req.method, route, res.statusCode)
     .observe(duration);
+  return true;
 }
 
 // Custom wrapper functions exposed for use in ai.service.js
@@ -69,6 +101,7 @@ function recordError(serviceName) {
 module.exports = {
   register: client.register,
   trackActiveRequests,
+  getActiveRequests,
   observeHttpRequest,
   recordLatency,
   recordTokenUsage,

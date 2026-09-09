@@ -17,12 +17,19 @@ const pool = require('./config/db');
 const metrics = require('./utils/metrics');
 const { initializeWebSocket, getIO } = require('./websocket');
 const noticesRoutes = require('./modules/notices/routes');
-const { getRedisStatus, getRedisClient } = require('./config/redis');
+const {
+  getRedisStatus,
+  getRedisClient,
+  closeRedisClient,
+} = require('./config/redis');
 const { csrfMiddleware } = require('./middleware/csrf');
 const { sanitizationMiddleware } = require('./middleware/sanitize');
 const { createAuditLog } = require('./utils/audit');
 const { setupCronJobs } = require('./utils/cron');
 const githubSyncOrchestrator = require('./modules/github-sync/orchestrator');
+
+let isShuttingDown = false;
+let shutdownStarted = false;
 
 const app = Fastify({
   trustProxy: config.nodeEnv === 'production' ? true : 'loopback',
@@ -38,6 +45,10 @@ const app = Fastify({
 });
 
 // Layer 1: Register monitoring routes BEFORE global middleware to ensure observability
+app.addHook('onRequest', metrics.trackActiveRequests);
+app.addHook('onRequest', async (request) => {
+  request.metricsStartTime = process.hrtime.bigint().toString();
+});
 
 app.get(
   '/metrics',
@@ -68,8 +79,14 @@ app.get(
     },
   },
   async (req, reply) => {
-    return reply.send({ status: 'ok' });
+  if (isShuttingDown) {
+    return reply.status(503).send({
+      status: 'shutting_down',
+    });
   }
+
+  return reply.send({ status: 'ok' });
+}
 );
 
 app.get(
@@ -146,7 +163,7 @@ app.register(require('@fastify/cors'), {
     return cb(corsError, false);
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'],
 });
 
@@ -194,6 +211,9 @@ app.register(require('@fastify/multipart'), {
 app.register(require('@fastify/static'), {
   root: path.join(__dirname, '..', config.uploadDir),
   prefix: '/uploads/',
+  setHeaders: (res) => {
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  },
 });
 
 if (process.env.NODE_ENV !== 'test') {
@@ -306,12 +326,6 @@ app.get('/fallback', async (req, reply) => {
   `);
 });
 
-app.addHook('onRequest', metrics.trackActiveRequests);
-
-app.addHook('onRequest', async (request) => {
-  request.startTime = Date.now();
-});
-
 app.addHook('onRequest', async (request) => {
   request.log.info(
     {
@@ -324,7 +338,7 @@ app.addHook('onRequest', async (request) => {
 });
 
 app.addHook('onResponse', async (request, reply) => {
-  metrics.observeHttpRequest(request, reply, request.startTime);
+  metrics.observeHttpRequest(request, reply, request.metricsStartTime);
 
   if (!request?.auditOnResponse) return;
   if (reply.statusCode >= 200 && reply.statusCode < 300) {
@@ -505,8 +519,19 @@ const start = async () => {
 const SHUTDOWN_TIMEOUT = 20000;
 
 const gracefulShutdown = async (signal) => {
-  app.log.info({ signal }, `Received ${signal}, shutting down gracefully...`);
+  if (shutdownStarted) {
+    app.log.warn({ signal }, 'Shutdown already in progress');
+    return;
+  }
 
+  shutdownStarted = true;
+  isShuttingDown = true;
+
+
+  app.log.info(
+    { signal },
+    `Received ${signal}, shutting down gracefully...`
+  );
   const forceShutdown = setTimeout(() => {
     console.error('Shutdown timed out. Forcing exit.');
     process.exit(1);
@@ -514,6 +539,18 @@ const gracefulShutdown = async (signal) => {
 
   try {
     await app.close();
+
+
+    app.log.info(
+      { activeRequests: metrics.getActiveRequests() },
+      'Waiting for active requests to finish...'
+    );
+
+    while (metrics.getActiveRequests() > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    app.log.info('All active requests finished');
 
     try {
       const io = getIO();
@@ -527,6 +564,7 @@ const gracefulShutdown = async (signal) => {
     }
 
     await pool.end();
+    await closeRedisClient();
     await flushSentry(2000);
 
     try {

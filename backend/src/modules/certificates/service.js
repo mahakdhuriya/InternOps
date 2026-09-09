@@ -223,12 +223,6 @@ async function revokeCertificate(id, reason = null) {
 // ============================================================
 
 async function startBulkGeneration(data, userId) {
-  if (!Array.isArray(data.certificates)) {
-    const error = new Error('certificates must be an array');
-    error.statusCode = 400;
-    throw error;
-  }
-
   if (data.certificates.length > MAX_BULK_CERTIFICATES) {
     const error = new Error(
       `Bulk generation limit exceeded: maximum ${MAX_BULK_CERTIFICATES} certificates per request (received ${data.certificates.length})`
@@ -236,7 +230,6 @@ async function startBulkGeneration(data, userId) {
     error.statusCode = 400;
     throw error;
   }
-}
 
   const job = await repo.createBulkJob(
     {
@@ -252,30 +245,31 @@ async function startBulkGeneration(data, userId) {
     userId
   );
 
-  const itemsToCreate = data.certificates.map((certData) => ({
-    bulk_job_id: job.id,
-    recipient_name: certData.recipient_name,
-    recipient_email: certData.recipient_email,
-    row_data: certData,
-    status: 'pending',
-  }));
+const itemsToCreate = data.certificates.map((certData) => ({
+  bulk_job_id: job.id,
+  recipient_name: certData.recipient_name,
+  recipient_email: certData.recipient_email,
+  row_data: certData,
+  status: 'pending',
+}));
 
-  await repo.createBulkJobItemsBatch(itemsToCreate);
 
-  const bulkJobQueue = require('../../services/bulkJobQueue');
-  bulkJobQueue.addJob(job.id, data, userId);
+await repo.createBulkJobItemsBatch(itemsToCreate);
 
-  return {
-    success: true,
-    data: {
-      job_id: job.id,
-      total: data.certificates.length,
-      generated: 0,
-      failed: 0,
-      errors: [],
-    },
-  };
+const bulkJobQueue = require('../../services/bulkJobQueue');
+bulkJobQueue.addJob(job.id, data, userId);
 
+return {
+  success: true,
+  data: {
+    job_id: job.id,
+    total: data.certificates.length,
+    generated: 0,
+    failed: 0,
+    errors: [],
+  },
+};
+}
 
 async function processBulkGeneration(jobId, initialData, userId, pLimiter) {
   const limit = pLimiter || pLimit(5);

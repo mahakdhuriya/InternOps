@@ -5,7 +5,10 @@ const logger = require('../logger');
 let client = null;
 let clientPromise = null;
 let redisConnected = false;
+let isShuttingDown = false;
 let reconnectDelay = 1000;
+let retryAfter = 0;
+let unavailableWarningShown = false;
 const MAX_RECONNECT_DELAY = 30000;
 
 function getSafeRedisError(err) {
@@ -48,12 +51,18 @@ function scheduleReconnect() {
 }
 
 async function getRedisClient() {
+  if (isShuttingDown) return null;
+
   if (process.env.NODE_ENV === 'test') return null;
 
   const redisOptions = buildRedisClientOptions();
   if (!redisOptions) return null;
 
   if (client) return client;
+
+  if (Date.now() < retryAfter) {
+    return null;
+  }
   if (clientPromise) return clientPromise;
 
   clientPromise = (async () => {
@@ -140,7 +149,7 @@ async function isAccessTokenBlacklisted(jti) {
   if (!client) {
     logger.warn(
       { jti },
-      'Redis unavailable — skipping token revocation check (fail open)'
+      'Redis unavailable - skipping token revocation check (fail open)'
     );
 
     // Fail open: allow the request when Redis is unavailable.
@@ -154,9 +163,38 @@ async function isAccessTokenBlacklisted(jti) {
   return (await client.exists(`blacklist:${jti}`)) === 1;
 }
 
+async function closeRedisClient() {
+  isShuttingDown = true;
+
+  if (clientPromise) {
+    try {
+      await clientPromise;
+    } catch {
+      // Ignore connection errors during shutdown
+    }
+  }
+
+  if (client) {
+    try {
+      await client.quit();
+    } catch {
+      try {
+        await client.disconnect();
+      } catch {
+        // Ignore disconnect errors during shutdown
+      }
+    }
+  }
+
+  client = null;
+  clientPromise = null;
+  redisConnected = false;
+}
+
 module.exports = {
   getRedisClient,
   getRedisStatus,
+  closeRedisClient,
   blacklistAccessToken,
   isAccessTokenBlacklisted,
 };

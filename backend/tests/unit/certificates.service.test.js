@@ -49,3 +49,54 @@ describe('certificate AI prompt sanitization', () => {
     expect(achievementEntry.length).toBeLessThanOrEqual(300);
   });
 });
+
+
+
+
+describe('bulk certificate generation limit', () => {
+  beforeEach(() => {
+    jest.resetModules();
+    jest.clearAllMocks();
+  });
+
+  it('rejects more than 500 certificates', async () => {
+    const mockCreateBulkJob = jest.fn();
+    const mockCreateBulkJobItemsBatch = jest.fn();
+    const mockAddJob = jest.fn();
+
+    jest.doMock('../../src/modules/certificates/repository', () => ({
+      createBulkJob: mockCreateBulkJob,
+      createBulkJobItemsBatch: mockCreateBulkJobItemsBatch,
+    }));
+
+    jest.doMock('../../src/services/bulkJobQueue', () => ({
+      addJob: mockAddJob,
+    }));
+
+    const {
+      startBulkGeneration,
+    } = require('../../src/modules/certificates/service');
+
+    const certificates = Array.from({ length: 501 }, (_, index) => ({
+      recipient_name: `User ${index + 1}`,
+      recipient_email: `user${index + 1}@example.com`,
+    }));
+
+    await expect(
+      startBulkGeneration(
+        {
+          template_id: 'template-id',
+          certificates,
+          send_email: false,
+        },
+        'user-id'
+      )
+    ).rejects.toMatchObject({
+      statusCode: 400,
+    });
+
+    expect(mockCreateBulkJob).not.toHaveBeenCalled();
+    expect(mockCreateBulkJobItemsBatch).not.toHaveBeenCalled();
+    expect(mockAddJob).not.toHaveBeenCalled();
+  });
+});
